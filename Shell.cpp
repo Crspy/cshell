@@ -2,9 +2,27 @@
 
 Shell::Shell() : m_PrevWorkingDir(GetCurrWorkingDir())
 {
+    std::string absolutePath = GetAbsolutePath();
+    if(!absolutePath.empty())
+        m_LogFile = std::ofstream(absolutePath + ".log" , std::ios::trunc); // if file exists append to it , otherwise just create it
+    else
+    {
+        std::cout << "Failed to get absolute path of the shell.\n";
+        std::cout << "Log file will be created in current working directory instead.\n";
+        m_LogFile = std::ofstream(GetName() + ".log", std::ios::app); // if file exists append to it , otherwise just create it
+    }
+    
+
+    // add a handler for SIGCHLD signal to update the children status and log them
+    auto SIGCHILD_Handler = [](int signal) {    
+        gShell.UpdateJobsStatus();
+    };
+
+    signal(SIGCHLD, SIGCHILD_Handler);
+
     /*
      replace behaviour of (CTRL + C) which terminates the shell
-     instead just print newline just like how bash does it
+     to just print newline just like how bash does it
     */
     struct sigaction sigint_action;
     sigint_action.sa_handler = [](int signal) {
@@ -40,8 +58,6 @@ void Shell::Run()
 
     while (true)
     {
-        UpdateJobsStatus();
-
         PrintPrompt();
 
         std::string line = ReadLine();
@@ -82,22 +98,26 @@ void Shell::UpdateJobsStatus()
         if (WIFEXITED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tExited" << std::endl;
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tStopped" << std::endl;
         }
         else if (WIFCONTINUED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_RUNNING);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tContinued" << std::endl;
         }
     }
 }
@@ -158,6 +178,7 @@ bool Shell::ExecuteBuiltinCommands(const std::vector<std::string> &args)
     }
     else if (args[0] == "exit")
     {
+        m_LogFile.close();
         exit(EXIT_SUCCESS);
     }
     else
@@ -184,16 +205,19 @@ void Shell::WaitForJob(int idx)
         if (WIFEXITED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << "\tStopped" << std::endl;
         }
     }
 
@@ -221,8 +245,8 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         else
         {
             // otherwise & is just attached to the last arg like "firefox&
-            // so we just remove it by replacing it with a null terminator
-            lastArg[lastArg.size() - 1] = '\0';
+            // so we just remove it
+            lastArg.pop_back();
         }
     }
 
@@ -353,14 +377,30 @@ bool Shell::ContinueJob(const std::vector<std::string> &args, bool bSendToForegr
     return true;
 }
 
+std::string Shell::GetAbsolutePath()
+{
+
+    char *path_buffer = realpath("/proc/self/exe", nullptr);
+    if (path_buffer)
+    {
+        std::string path_str{path_buffer};
+        free(path_buffer);
+        return path_str;
+    }
+    else
+    {
+        perror(GetName().c_str());
+    }
+    return {};
+}
+
 std::string Shell::GetCurrWorkingDir()
 {
     const size_t maxChunks = 25; // (25*FILENAME_MAX) = 100 KBs of current path are more than enough
-    std::string cwd;
 
     char stackBuffer[FILENAME_MAX]; // Stack buffer for the "normal" case
     if (getcwd(stackBuffer, sizeof(stackBuffer)) != NULL)
-        cwd = stackBuffer;
+        return stackBuffer;
     if (errno != ERANGE)
     {
         // It's not ERANGE, so we don't know how to handle it
@@ -368,6 +408,7 @@ std::string Shell::GetCurrWorkingDir()
         return {};
     }
 
+    std::string cwd;
     // Ok, the stack buffer isn't long enough; fallback to heap allocation
     for (size_t chunks = 2; chunks < maxChunks; ++chunks)
     {

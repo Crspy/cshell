@@ -5,6 +5,7 @@
 #include <cstring>
 #include <string>
 #include <sstream>
+#include <fstream>
 #include <vector>
 #include <memory>
 #include <cstdio>
@@ -19,11 +20,14 @@
 
 class Shell
 {
+    std::ofstream m_LogFile;
     const std::string m_ShellName = "cshell";
     std::string m_PrevWorkingDir; // previous working directory
     std::string m_CurrUsername;     // current logged in user name
     std::vector<Job> m_CurrentJobs; // current jobs launched by shell
 
+    
+    
     std::string ReadLine();
 
     // returns bool if args[0] isn't a builtin command
@@ -59,6 +63,9 @@ public:
     {
         return m_ShellName;
     }
+
+    // returns the absolute path in which the cshell binary exists
+    std::string GetAbsolutePath();
 
     std::string GetCurrWorkingDir();
 
@@ -108,3 +115,5 @@ public:
         }
     }
 };
+
+extern Shell gShell;

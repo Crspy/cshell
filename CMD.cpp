@@ -28,7 +28,6 @@ void cd(Shell &shell, const std::vector<std::string> &args)
 
 void jobs(Shell &shell, const std::vector<std::string> &args)
 {
-    shell.UpdateJobsStatus();
     const auto count = shell.GetCurrentJobs().size();
     for (size_t idx = 0; idx < count; ++idx)
     {
