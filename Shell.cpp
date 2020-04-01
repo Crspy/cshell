@@ -364,7 +364,8 @@ std::string Shell::GetCurrWorkingDir()
     if (errno != ERANGE)
     {
         // It's not ERANGE, so we don't know how to handle it
-        return "Cannot determine the current path.";
+        perror(GetName().c_str());
+        return {};
     }
 
     // Ok, the stack buffer isn't long enough; fallback to heap allocation
@@ -380,8 +381,10 @@ std::string Shell::GetCurrWorkingDir()
         if (errno != ERANGE)
         {
             // It's not ERANGE, so we don't know how to handle it
-            return "Cannot determine the current path.";
+            perror(GetName().c_str());
+            return {};
         }
     }
-    return "Cannot determine the current path; the path is apparently unreasonably long.";
+    perror(GetName().c_str());
+    return {};
 }
