@@ -1,6 +1,6 @@
 #include "Shell.hpp"
 
-Shell::Shell() : m_PrevWorkingDir(fs::current_path())
+Shell::Shell() : m_PrevWorkingDir(GetCurrWorkingDir())
 {
     /*
      replace behaviour of (CTRL + C) which terminates the shell
@@ -36,6 +36,8 @@ Shell::Shell() : m_PrevWorkingDir(fs::current_path())
 
 void Shell::Run()
 {
+    std::cout << "Welcome to " << m_ShellName << '\n';
+
     while (true)
     {
         UpdateJobsStatus();
@@ -66,28 +68,36 @@ std::string Shell::ReadLine()
 void Shell::UpdateJobsStatus()
 {
     int status, pid;
+
+    // we call waitpid with -1 to check for any child process that has changed status
+    // we use WNOHANG to prevent waitpid from blocking (returns immediately)
+    // we use WUNTRACED to get a report about status of stopped children
+    // we use WCONTINUED to get a report about status continued children
     while ((pid = waitpid(-1, &status, WNOHANG | WUNTRACED | WCONTINUED)) > 0)
     {
         const int idx = GetJobIdxByPID(pid);
+        if (idx == -1)
+            continue;
+
         if (WIFEXITED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_DONE;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_TERMINATED;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_SUSPENDED;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
         }
         else if (WIFCONTINUED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_RUNNING;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_RUNNING);
         }
     }
 }
@@ -95,8 +105,35 @@ void Shell::UpdateJobsStatus()
 void Shell::Parse(std::vector<std::string> &args)
 {
     if (args.empty())
-        return;
+        return; // do nothing
 
+    if (args.size() > 1)
+    {
+        for (auto &arg : args)
+        {
+            // check for tilde and replace it with HOME path
+            if (arg[0] == '~')
+            {
+                // we check what comes after '~'  is either '/' or  just nothing
+                // just to make sure it's a path not a folder/file name
+                if (arg[1] == '/' || arg.size() == 1)
+                {
+                    arg.replace(0, 1, getenv("HOME"));
+                }
+            }
+        }
+    }
+
+    if (!ExecuteBuiltinCommands(args))
+    {
+        // if it's not a builtin command
+        // then it must be an external program to be launched
+        LaunchJob(args);
+    }
+}
+
+bool Shell::ExecuteBuiltinCommands(const std::vector<std::string> &args)
+{
     if (args[0] == "cd")
     {
         CMD::cd(*this, args);
@@ -112,48 +149,59 @@ void Shell::Parse(std::vector<std::string> &args)
             std::cout << GetName() << ": fg: " << args[1] << ": no such job\n";
         }
     }
+    else if (args[0] == "bg")
+    {
+        if (!CMD::bg(*this, args))
+        {
+            std::cout << GetName() << ": bg: " << args[1] << ": no such job\n";
+        }
+    }
     else if (args[0] == "exit")
     {
         exit(EXIT_SUCCESS);
     }
     else
     {
-        LaunchJob(args);
+        return false; // not a builtin command
     }
+
+    return true;
 }
 
 void Shell::WaitForJob(int idx)
 {
-    const int pid = m_CurrentJobs[idx].m_Pid;
+    const int pid = m_CurrentJobs[idx].GetPID();
 
     // let fgPID control the terminal fd
     tcsetpgrp(STDIN_FILENO, pid);
 
-
     int status = 0;
+    // here we use waitpid to just keep polling status of the specified child pid
+    // we use WUNTRACED to return if the child process was stopped
     int wait_pid = waitpid(pid, &status, WUNTRACED);
     if (wait_pid == pid)
     {
         if (WIFEXITED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_DONE;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_TERMINATED;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
-            m_CurrentJobs[idx].m_Status = JobStatus::STATUS_SUSPENDED;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
         }
     }
 
-    // ignore SIGTTOU signal temporarily to prevent shell from getting stopped by foreground process when it exits/stops/terminates
+    // ignore SIGTTOU signal temporarily to prevent shell from getting
+    // stopped by foreground process when it exits/stops/terminates
     signal(SIGTTOU, SIG_IGN);
     tcsetpgrp(STDIN_FILENO, getpid()); // restore terminal control to shell
-    signal(SIGTTOU, SIG_DFL); // stop ignoring SIGTTOU signal since our shell is back in control
+    signal(SIGTTOU, SIG_DFL);          // stop ignoring SIGTTOU signal since our shell is back in control
 }
 
 void Shell::LaunchJob(std::vector<std::string> &args)
@@ -195,7 +243,7 @@ void Shell::LaunchJob(std::vector<std::string> &args)
             std::stringstream ss(std::move(idx_str));
             ss >> idx; // convert the string to an int (parse as an int)
             if (idx <= (m_CurrentJobs.size() - 1))
-                args[i] = std::to_string(m_CurrentJobs[idx].m_Pid);
+                args[i] = std::to_string(m_CurrentJobs[idx].GetPID());
         }
     }
 
@@ -212,6 +260,8 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         signal(SIGTTOU, SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
+        // set the child process group id to be its own pid
+        // so that the child don't terminate when we exit shell (in case of background running)
         setpgid(0, 0);
 
         /*
@@ -229,15 +279,15 @@ void Shell::LaunchJob(std::vector<std::string> &args)
 
         if (execvp(cargs[0], cargs.get()) == -1)
         {
-            perror(GetName());
-            std::cout << "err in execvp " << args.size() << "\n";
+            perror(GetName().c_str());
         }
 
         exit(EXIT_FAILURE);
     }
-    else if (pid < 0)
+    else if (pid == -1)
     {
-        perror(GetName());
+        // failed to fork
+        perror(GetName().c_str());
     }
     else
     {
@@ -246,12 +296,92 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         m_CurrentJobs.emplace_back(args[0], JobStatus::STATUS_RUNNING, pid);
         if (bIsBackgroundExec)
         {
-            PrintJobStatus(m_CurrentJobs.size() - 1, false); // print latest job without status
+            // print latest job without status
+            PrintJobStatus(m_CurrentJobs.size() - 1, false);
         }
         else
         {
-            WaitForJob(m_CurrentJobs.size() -
-                       1); // wait for foreground process (latest job) till it gets stopped or terminated
+            // wait for foreground process (latest job) till it gets stopped or terminated
+            WaitForJob(m_CurrentJobs.size() - 1);
         }
     }
+}
+
+bool Shell::ContinueJob(const std::vector<std::string> &args, bool bSendToForeground)
+{
+    if (m_CurrentJobs.empty())
+    {
+        std::cout << "No jobs available\n";
+        return true;
+    }
+
+    size_t idx = m_CurrentJobs.size() - 1; // choose last one by default in case there was no second argument ( no idx passed )
+    if (args.size() > 1)
+    {
+        /*
+         parsing the index
+        */
+        if (args[1].find_first_of('%') == std::string::npos)
+            return false;                                    // if % can't be found then it's a syntax error
+        const auto &idx_it = args[1].find_first_not_of('%'); // the index should come after % directly
+        if (idx_it == std::string::npos)
+            return false;                             // if nothing found after % then it's an error
+        std::string idx_str = args[1].substr(idx_it); // extract the string that contains the index
+        bool bHasDigitsOnly = (idx_str.find_first_not_of("0123456789") == std::string::npos);
+        if (bHasDigitsOnly)
+        {
+            std::stringstream ss(idx_str);
+            ss >> idx; // convert the string to an int (parse as an int)
+            if (idx > (m_CurrentJobs.size() - 1))
+                return false;
+        }
+        else
+            return false;
+    }
+
+    // send CONTINUE signal in case the process was stopped
+    if (kill(m_CurrentJobs[idx].GetPID(), SIGCONT) < 0)
+    {
+        return false;
+    }
+
+    if (bSendToForeground)
+    {
+        WaitForJob(idx); // put first job in background
+    }
+
+    return true;
+}
+
+std::string Shell::GetCurrWorkingDir()
+{
+    const size_t maxChunks = 25; // (25*FILENAME_MAX) = 100 KBs of current path are more than enough
+    std::string cwd;
+
+    char stackBuffer[FILENAME_MAX]; // Stack buffer for the "normal" case
+    if (getcwd(stackBuffer, sizeof(stackBuffer)) != NULL)
+        cwd = stackBuffer;
+    if (errno != ERANGE)
+    {
+        // It's not ERANGE, so we don't know how to handle it
+        return "Cannot determine the current path.";
+    }
+
+    // Ok, the stack buffer isn't long enough; fallback to heap allocation
+    for (size_t chunks = 2; chunks < maxChunks; ++chunks)
+    {
+        const size_t bufSize = FILENAME_MAX * chunks;
+        cwd.resize(bufSize);
+
+        // starting with C++11 std::string is using contiguous memory
+        // and it's safe to use  &cwd[0] to write on internal buffer directly
+        if (getcwd(&cwd[0], bufSize) != NULL)
+            return cwd;
+        if (errno != ERANGE)
+        {
+            // It's not ERANGE, so we don't know how to handle it
+            return "Cannot determine the current path.";
+        }
+    }
+    return "Cannot determine the current path; the path is apparently unreasonably long.";
 }

@@ -4,7 +4,7 @@ cshell is a simple version of linux shell.
 
 ## Build
 you need  CMake v3.0 or above.\
-you need g++ 8.0 or above for c++17 support.
+you need g++  version that supports at least c++14.
 
 ## Installation
 
@@ -17,7 +17,7 @@ two folders will be created `bin` and `build`
 
 ## Run
 
-just run the file inside `bin` folder
+just run the file inside `bin/release` folder
 
 ```bash
 cd ./bin/release

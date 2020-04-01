@@ -1,14 +1,13 @@
 #pragma once
 #include <iostream>
-#include <string_view>
-#include <filesystem>
-#include <cstdio>
 #include <algorithm>
 #include <iterator>
 #include <cstring>
 #include <string>
+#include <sstream>
 #include <vector>
 #include <memory>
+#include <cstdio>
 #include <unistd.h>
 #include <wait.h>
 #include <pwd.h>
@@ -18,41 +17,50 @@
 #include "Job.hpp"
 #include "CMD.hpp"
 
-namespace fs = std::filesystem;
-
 class Shell
 {
-    const char *const m_ShellName = "cshell";
-    std::string m_PrevWorkingDir;    // previous working directory
-    std::string_view m_CurrUsername; // current user name (immutable string)
-    std::vector<Job> m_CurrentJobs;  // current jobs launched by shell
-
+    const std::string m_ShellName = "cshell";
+    std::string m_PrevWorkingDir; // previous working directory
+    std::string m_CurrUsername;     // current logged in user name
+    std::vector<Job> m_CurrentJobs; // current jobs launched by shell
 
     std::string ReadLine();
 
-    void Parse(std::vector<std::string> &args);
+    // returns bool if args[0] isn't a builtin command
+    bool ExecuteBuiltinCommands(const std::vector<std::string> &args);
 
-    
+    void Parse(std::vector<std::string> &args);
 
     void LaunchJob(std::vector<std::string> &args);
 
+#define COLOR_BOLD_GREEN "\033[1;32m"
+#define COLOR_BOLD_BLUE "\033[1;34m"
+#define COLOR_NONE "\033[0m"
+
     void PrintPrompt()
     {
-        std::cout << m_CurrUsername << " : " << fs::current_path();
-        std::cout << " >> ";
+        printf(COLOR_BOLD_GREEN "%s" COLOR_NONE " >> ",
+               m_CurrUsername.c_str());
     }
 
 public:
     Shell();
-    
+
     void Run();
 
     void WaitForJob(int idx);
-    
-    auto GetName()
+
+    // helper function for  'bg' and 'fg' commands.
+    // returns false if Job idx specified doesn't exist or there was a syntax error.Otherwise , returns true.
+    // bSendToForeground : if true the job is continued in foreground. if false it's continued in background
+    bool ContinueJob(const std::vector<std::string> &args, bool bSendToForeground);
+
+    std::string GetName()
     {
         return m_ShellName;
     }
+
+    std::string GetCurrWorkingDir();
 
     void SetPrevWorkingDir(const std::string &Dir)
     {
@@ -69,9 +77,6 @@ public:
         return m_CurrentJobs;
     }
 
-    
-
-
     void UpdateJobsStatus();
 
     void RemoveJob(int id)
@@ -84,23 +89,22 @@ public:
         const auto count = m_CurrentJobs.size();
         for (size_t idx = 0; idx < count; ++idx)
         {
-            if (m_CurrentJobs[idx].m_Pid == pid)
+            if (m_CurrentJobs[idx].GetPID() == pid)
             {
                 return idx;
             }
         }
-        throw std::runtime_error("invalid pid passed to GetJobIDByPID");
+        return -1; // not found
     }
 
     void PrintJobStatus(int idx, bool bPrintStatus = true)
     {
         const auto &job = m_CurrentJobs[idx];
         if (bPrintStatus)
-            printf("[%d]\t%d\t%s\t%s\n", idx, job.m_Pid, GetStatusString(job.m_Status), job.m_Name.c_str());
+            printf("[%d]\t%d\t%s\t\t%s\n", idx, job.GetPID(), job.GetStatusString(), job.GetName().c_str());
         else
         {
-            printf("[%d]\t%d\t%s\n", idx, job.m_Pid, job.m_Name.c_str());
+            printf("[%d]\t%d\n", idx, job.GetPID());
         }
     }
-
 };

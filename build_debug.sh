@@ -1,4 +1,3 @@
- 
 type="Debug"
 name="cshell"
 mkdir -p ./build
