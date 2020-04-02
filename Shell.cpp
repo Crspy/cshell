@@ -20,23 +20,23 @@ Shell::Shell() : m_PrevWorkingDir(GetCurrWorkingDir())
     signal(SIGCHLD, SIGCHLD_Handler);
 
     /*
-     replace behaviour of (CTRL + C) which terminates the shell
-     to just print newline just like how bash does it
+        replace behaviour of (CTRL + C) which terminates the shell
+        and  (CTRL + Z)  which stops the shell
+        and  (CTRL + \)  which dumps core and terminates the shell
+        to just print newline just like how most shell does it
     */
-    struct sigaction sigint_action;
-    sigint_action.sa_handler = [](int signal) {
+    struct sigaction sigIgnore_action;
+    sigIgnore_action.sa_handler = [](int signal) {
         std::cout << std::endl;
     };
-    sigint_action.sa_flags = 0;
-    sigemptyset(&sigint_action.sa_mask);
-    sigaction(SIGINT, &sigint_action, NULL);
-
-    // prevent dump core signal
-    signal(SIGQUIT, SIG_IGN);
+    sigIgnore_action.sa_flags = 0;
+    sigemptyset(&sigIgnore_action.sa_mask);
+    sigaction(SIGINT, &sigIgnore_action, NULL);
+    sigaction(SIGQUIT, &sigIgnore_action, NULL);
+    sigaction(SIGTSTP, &sigIgnore_action, NULL);
 
     // prevent jobs running in background from stopping the shell
-    // on read/write operations to the terminal
-    signal(SIGTSTP, SIG_IGN);
+    // when trying to read from terminal
     signal(SIGTTIN, SIG_IGN);
 
     pid_t pid = getpid();         // get pid of the shell
