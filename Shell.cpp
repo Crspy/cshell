@@ -3,22 +3,21 @@
 Shell::Shell() : m_PrevWorkingDir(GetCurrWorkingDir())
 {
     std::string absolutePath = GetAbsolutePath();
-    if(!absolutePath.empty())
-        m_LogFile = std::ofstream(absolutePath + ".log" , std::ios::trunc); // if file exists append to it , otherwise just create it
+    if (!absolutePath.empty())
+        m_LogFile = std::ofstream(absolutePath + ".log", std::ios::trunc);
     else
     {
         std::cout << "Failed to get absolute path of the shell.\n";
         std::cout << "Log file will be created in current working directory instead.\n";
-        m_LogFile = std::ofstream(GetName() + ".log", std::ios::app); // if file exists append to it , otherwise just create it
+        m_LogFile = std::ofstream(GetName() + ".log", std::ios::trunc);
     }
-    
 
     // add a handler for SIGCHLD signal to update the children status and log them
-    auto SIGCHILD_Handler = [](int signal) {    
+    auto SIGCHLD_Handler = [](int signal) {
         gShell.UpdateJobsStatus();
     };
 
-    signal(SIGCHLD, SIGCHILD_Handler);
+    signal(SIGCHLD, SIGCHLD_Handler);
 
     /*
      replace behaviour of (CTRL + C) which terminates the shell
@@ -97,22 +96,22 @@ void Shell::UpdateJobsStatus()
 
         if (WIFEXITED(status))
         {
-            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tExited" << std::endl;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_EXITED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
             PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tStopped" << std::endl;
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
         }
         else if (WIFCONTINUED(status))
         {
@@ -204,20 +203,24 @@ void Shell::WaitForJob(int idx)
     {
         if (WIFEXITED(status))
         {
-            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_DONE);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
+            m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_EXITED);
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
+            // in case we termianted by CTRL + C , a "^C" will be echoed  
+            // and we want to avoid printing our prompt after that
+            // so we just print a newline
+            putchar('\n'); 
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tTerminated" << std::endl;
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
-            m_LogFile << m_CurrentJobs[idx].GetName() << "\tStopped" << std::endl;
+            m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
         }
     }
 

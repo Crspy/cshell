@@ -6,7 +6,7 @@
 enum class JobStatus
 {
     STATUS_RUNNING,
-    STATUS_DONE,
+    STATUS_EXITED,
     STATUS_STOPPED,
     STATUS_TERMINATED,
 };
@@ -17,12 +17,8 @@ class Job
     JobStatus m_Status;
     pid_t m_Pid;
 public:
-
     Job(const std::string &name, JobStatus status, pid_t pid)
-        : m_Name(name), m_Status(status), m_Pid(pid)
-    {
-
-    }
+        : m_Name(name), m_Status(status), m_Pid(pid) {}
 
     void SetStatus(JobStatus status)
     {
@@ -34,7 +30,7 @@ public:
         return m_Pid;
     }
 
-    const std::string& GetName() const
+    const std::string &GetName() const
     {
         return m_Name;
     }
@@ -45,8 +41,8 @@ public:
         {
         case JobStatus::STATUS_RUNNING:
             return "Running";
-        case JobStatus::STATUS_DONE:
-            return "Done";
+        case JobStatus::STATUS_EXITED:
+            return "Exited";
         case JobStatus::STATUS_STOPPED:
             return "Stopped";
         case JobStatus::STATUS_TERMINATED:

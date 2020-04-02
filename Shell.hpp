@@ -27,7 +27,6 @@ class Shell
     std::vector<Job> m_CurrentJobs; // current jobs launched by shell
 
     
-    
     std::string ReadLine();
 
     // returns bool if args[0] isn't a builtin command
@@ -37,12 +36,13 @@ class Shell
 
     void LaunchJob(std::vector<std::string> &args);
 
-#define COLOR_BOLD_GREEN "\033[1;32m"
-#define COLOR_BOLD_BLUE "\033[1;34m"
-#define COLOR_NONE "\033[0m"
+
 
     void PrintPrompt()
     {
+        #define COLOR_BOLD_GREEN "\033[1;32m"
+        #define COLOR_NONE "\033[0m"
+
         printf(COLOR_BOLD_GREEN "%s" COLOR_NONE " >> ",
                m_CurrUsername.c_str());
     }
