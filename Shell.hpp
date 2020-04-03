@@ -12,6 +12,8 @@
 #include <unistd.h>
 #include <wait.h>
 #include <pwd.h>
+#include <termios.h>
+#include <sys/prctl.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include "Util.hpp"
@@ -22,11 +24,10 @@ class Shell
 {
     std::ofstream m_LogFile;
     const std::string m_ShellName = "cshell";
-    std::string m_PrevWorkingDir; // previous working directory
+    std::string m_PrevWorkingDir;   // previous working directory
     std::string m_CurrUsername;     // current logged in user name
     std::vector<Job> m_CurrentJobs; // current jobs launched by shell
 
-    
     std::string ReadLine();
 
     // returns bool if args[0] isn't a builtin command
@@ -36,12 +37,10 @@ class Shell
 
     void LaunchJob(std::vector<std::string> &args);
 
-
-
     void PrintPrompt()
     {
-        #define COLOR_BOLD_GREEN "\033[1;32m"
-        #define COLOR_NONE "\033[0m"
+#define COLOR_BOLD_GREEN "\033[1;32m"
+#define COLOR_NONE "\033[0m"
 
         printf(COLOR_BOLD_GREEN "%s" COLOR_NONE " >> ",
                m_CurrUsername.c_str());
@@ -59,7 +58,9 @@ public:
     // bSendToForeground : if true the job is continued in foreground. if false it's continued in background
     bool ContinueJob(const std::vector<std::string> &args, bool bSendToForeground);
 
-    std::string GetName()
+    int ParseJobIndex(const std::vector<std::string> &args);
+
+    const std::string &GetName() const
     {
         return m_ShellName;
     }
@@ -86,9 +87,9 @@ public:
 
     void UpdateJobsStatus();
 
-    void RemoveJob(int id)
+    void RemoveJob(int idx)
     {
-        m_CurrentJobs.erase(m_CurrentJobs.begin() + id);
+        m_CurrentJobs.erase(m_CurrentJobs.begin() + idx);
     }
 
     int GetJobIdxByPID(pid_t pid)
@@ -108,7 +109,12 @@ public:
     {
         const auto &job = m_CurrentJobs[idx];
         if (bPrintStatus)
-            printf("[%d]\t%d\t%s\t\t%s\n", idx, job.GetPID(), job.GetStatusString(), job.GetName().c_str());
+        {
+            printf("[%d]\t%d\t%s\t\t%s ", idx, job.GetPID(), job.GetStatusString(), job.GetName().c_str());
+            if (job.GetExecType() == ExecutionType::BACKGROUND)
+                putchar('&'); // puts & after the name if it's a background process
+            putchar('\n');
+        }
         else
         {
             printf("[%d]\t%d\n", idx, job.GetPID());

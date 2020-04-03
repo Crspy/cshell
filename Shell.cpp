@@ -36,11 +36,13 @@ Shell::Shell() : m_PrevWorkingDir(GetCurrWorkingDir())
     sigaction(SIGTSTP, &sigIgnore_action, NULL);
 
     // prevent jobs running in background from stopping the shell
-    // when trying to read from terminal
+    // when trying to read/write from terminal
     signal(SIGTTIN, SIG_IGN);
+    signal(SIGTTOU, SIG_IGN);
 
-    pid_t pid = getpid();         // get pid of the shell
-    setpgid(pid, pid);            // set process group id of the shell process to be itself
+    pid_t pid = getpid(); // get pid of the shell
+    setpgid(pid, pid);    // set process group id of the shell process to be itself
+
     tcsetpgrp(STDIN_FILENO, pid); // make shell pgid the foreground pgid on the termianl associated to STDIN_FILENO
 
     // get our current logged-in username
@@ -98,14 +100,12 @@ void Shell::UpdateJobsStatus()
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_EXITED);
             m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
-            PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSIGNALED(status))
         {
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
             m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
-            PrintJobStatus(idx);
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
@@ -175,6 +175,13 @@ bool Shell::ExecuteBuiltinCommands(const std::vector<std::string> &args)
             std::cout << GetName() << ": bg: " << args[1] << ": no such job\n";
         }
     }
+    else if (args[0] == "disown")
+    {
+        if (!CMD::disown(*this, args))
+        {
+            std::cout << GetName() << ": disown: " << args[1] << ": no such job\n";
+        }
+    }
     else if (args[0] == "exit")
     {
         m_LogFile.close();
@@ -209,26 +216,26 @@ void Shell::WaitForJob(int idx)
         }
         else if (WIFSIGNALED(status))
         {
-            // in case we termianted by CTRL + C , a "^C" will be echoed  
+            // in case we termianted by CTRL + C , a "^C" will be echoed
             // and we want to avoid printing our prompt after that
             // so we just print a newline
-            putchar('\n'); 
+            putchar('\n');
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_TERMINATED);
             m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
             RemoveJob(idx);
         }
         else if (WIFSTOPPED(status))
         {
+            // in case we stopped the process by CTRL + Z , a "^Z" will be echoed
+            // and we want to avoid printing our prompt after that
+            // so we just print a newline
+            putchar('\n');
             m_CurrentJobs[idx].SetStatus(JobStatus::STATUS_STOPPED);
             m_LogFile << m_CurrentJobs[idx].GetName() << '\t' << m_CurrentJobs[idx].GetStatusString() << std::endl;
         }
     }
 
-    // ignore SIGTTOU signal temporarily to prevent shell from getting
-    // stopped by foreground process when it exits/stops/terminates
-    signal(SIGTTOU, SIG_IGN);
     tcsetpgrp(STDIN_FILENO, getpid()); // restore terminal control to shell
-    signal(SIGTTOU, SIG_DFL);          // stop ignoring SIGTTOU signal since our shell is back in control
 }
 
 void Shell::LaunchJob(std::vector<std::string> &args)
@@ -288,7 +295,7 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         signal(SIGCHLD, SIG_DFL);
 
         // set the child process group id to be its own pid
-        // so that the child don't terminate when we exit shell (in case of background running)
+        // so that the child don't terminate when we exit shell
         setpgid(0, 0);
 
         /*
@@ -320,18 +327,44 @@ void Shell::LaunchJob(std::vector<std::string> &args)
     {
         // in parent process
 
-        m_CurrentJobs.emplace_back(args[0], JobStatus::STATUS_RUNNING, pid);
         if (bIsBackgroundExec)
         {
+            m_CurrentJobs.emplace_back(Job(args[0], JobStatus::STATUS_RUNNING, ExecutionType::BACKGROUND, pid));
             // print latest job without status
             PrintJobStatus(m_CurrentJobs.size() - 1, false);
         }
         else
         {
+            m_CurrentJobs.emplace_back(Job(args[0], JobStatus::STATUS_RUNNING, ExecutionType::FOREGROUND, pid));
             // wait for foreground process (latest job) till it gets stopped or terminated
             WaitForJob(m_CurrentJobs.size() - 1);
         }
     }
+}
+
+int Shell::ParseJobIndex(const std::vector<std::string> &args)
+{
+    int idx;
+    if (args[1].find_first_of('%') == std::string::npos)
+        return -1; // if % can't be found then it's a syntax error
+
+    const auto &idx_it = args[1].find_first_not_of('%'); // the index should come after % directly
+    if (idx_it == std::string::npos)
+        return -1; // if nothing found after % then it's an error
+
+    std::string idx_str = args[1].substr(idx_it); // extract the string that contains the index
+    bool bHasDigitsOnly = (idx_str.find_first_not_of("0123456789") == std::string::npos);
+    if (bHasDigitsOnly)
+    {
+        std::stringstream ss(idx_str);
+        ss >> idx; // convert the string to an int (parse as an int)
+        if (idx > (m_CurrentJobs.size() - 1))
+            return -1;
+    }
+    else
+        return -1;
+
+    return idx;
 }
 
 bool Shell::ContinueJob(const std::vector<std::string> &args, bool bSendToForeground)
@@ -345,24 +378,8 @@ bool Shell::ContinueJob(const std::vector<std::string> &args, bool bSendToForegr
     size_t idx = m_CurrentJobs.size() - 1; // choose last one by default in case there was no second argument ( no idx passed )
     if (args.size() > 1)
     {
-        /*
-         parsing the index
-        */
-        if (args[1].find_first_of('%') == std::string::npos)
-            return false;                                    // if % can't be found then it's a syntax error
-        const auto &idx_it = args[1].find_first_not_of('%'); // the index should come after % directly
-        if (idx_it == std::string::npos)
-            return false;                             // if nothing found after % then it's an error
-        std::string idx_str = args[1].substr(idx_it); // extract the string that contains the index
-        bool bHasDigitsOnly = (idx_str.find_first_not_of("0123456789") == std::string::npos);
-        if (bHasDigitsOnly)
-        {
-            std::stringstream ss(idx_str);
-            ss >> idx; // convert the string to an int (parse as an int)
-            if (idx > (m_CurrentJobs.size() - 1))
-                return false;
-        }
-        else
+        idx = ParseJobIndex(args);
+        if (idx == -1) // parsing failed
             return false;
     }
 
@@ -374,7 +391,12 @@ bool Shell::ContinueJob(const std::vector<std::string> &args, bool bSendToForegr
 
     if (bSendToForeground)
     {
-        WaitForJob(idx); // put first job in background
+        m_CurrentJobs[idx].SetExecType(ExecutionType::FOREGROUND);
+        WaitForJob(idx);
+    }
+    else
+    {
+        m_CurrentJobs[idx].SetExecType(ExecutionType::BACKGROUND);
     }
 
     return true;

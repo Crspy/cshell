@@ -28,8 +28,8 @@ void cd(Shell &shell, const std::vector<std::string> &args)
 
 void jobs(Shell &shell, const std::vector<std::string> &args)
 {
-    const auto count = shell.GetCurrentJobs().size();
-    for (size_t idx = 0; idx < count; ++idx)
+    const auto Jobs = shell.GetCurrentJobs();
+    for (size_t idx = 0; idx < Jobs.size(); ++idx)
     {
         shell.PrintJobStatus(idx);
     }
@@ -44,5 +44,31 @@ bool fg(Shell &shell, const std::vector<std::string> &args)
 {
     return shell.ContinueJob(args, true);
 }
+
+bool disown(Shell &shell, const std::vector<std::string> &args)
+{
+    auto& Jobs = shell.GetCurrentJobs();
+    if (Jobs.empty())
+    {
+        std::cout << "No jobs available\n";
+        return true;
+    }
+
+    size_t idx = Jobs.size() - 1; // choose last one by default in case there was no second argument ( no idx passed )
+    if (args.size() > 1)
+    {
+        idx = shell.ParseJobIndex(args);
+        if (idx == -1) // parsing failed
+            return false;
+    }
+
+    if(Jobs[idx].GetStatus() == JobStatus::STATUS_STOPPED)
+    {
+        printf("%s: warning: deleting stopped job %d with pid %d\n",shell.GetName().c_str(),idx,Jobs[idx].GetPID());
+    }
+    shell.RemoveJob(idx);
+    return true;
+}
+
 
 } // namespace CMD

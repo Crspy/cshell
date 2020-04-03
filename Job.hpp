@@ -1,6 +1,7 @@
 #pragma once
-
+#include <iostream>
 #include <sys/types.h>
+#include <unistd.h>
 #include <string>
 
 enum class JobStatus
@@ -10,19 +11,41 @@ enum class JobStatus
     STATUS_STOPPED,
     STATUS_TERMINATED,
 };
+enum class ExecutionType
+{
+    BACKGROUND,
+    FOREGROUND
+};
 
 class Job
 {
     std::string m_Name;
     JobStatus m_Status;
+    ExecutionType m_ExecType;
     pid_t m_Pid;
+
 public:
-    Job(const std::string &name, JobStatus status, pid_t pid)
-        : m_Name(name), m_Status(status), m_Pid(pid) {}
+    Job(const std::string &name, JobStatus status, ExecutionType execType, pid_t pid)
+        : m_Name(name), m_Status(status), m_ExecType(execType), m_Pid(pid) {}
+
+    void SetExecType(ExecutionType execType)
+    {
+        m_ExecType = execType;
+    }
+
+    ExecutionType GetExecType() const
+    {
+        return m_ExecType;
+    }
 
     void SetStatus(JobStatus status)
     {
         m_Status = status;
+    }
+
+    JobStatus GetStatus() const
+    {
+        return m_Status;
     }
 
     pid_t GetPID() const
