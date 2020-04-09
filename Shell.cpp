@@ -294,8 +294,8 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         signal(SIGTTOU, SIG_DFL);
         signal(SIGCHLD, SIG_DFL);
 
-        // set the child process group id to be its own pid
-        // so that the child don't terminate when we exit shell
+        // set the child pid to be the group leader
+        // of its own process group
         setpgid(0, 0);
 
         /*
@@ -314,7 +314,10 @@ void Shell::LaunchJob(std::vector<std::string> &args)
         if (execvp(cargs[0], cargs.get()) == -1)
         {
             perror(GetName().c_str());
+            
         }
+        // flush immediately so that our error message get printed before the prompt
+        fflush(stdout);
 
         exit(EXIT_FAILURE);
     }
@@ -325,7 +328,15 @@ void Shell::LaunchJob(std::vector<std::string> &args)
     }
     else
     {
-        // in parent process
+        // in parent process (shell)
+
+        /*
+        The shell should also call setpgid to put each of its child processes into the new process group.
+        This is because there is a potential timing problem: each child process must be put in the process group before it begins executing a new program,
+        and the shell depends on having all the child processes in the group before it continues executing. 
+        If both the child processes and the shell call setpgid, this ensures that the right things happen no matter which process gets to it first. 
+        */
+        setpgid(pid, pid);
 
         if (bIsBackgroundExec)
         {
